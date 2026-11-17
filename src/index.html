@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --line: #d8dee4;
+      --bar: #4c8bf5; --bar-bg: #eef1f5; --hover: #f6f8fa; --warn: #9a6700;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --line: #30363d;
+        --bar: #58a6ff; --bar-bg: #21262d; --hover: #161b22; --warn: #d29922;
+      }
+    }
+    body {
+      margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+      font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 960px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    p { margin: 4px 0; }
+    .muted { color: var(--muted); }
+    .warn { color: var(--warn); }
+    button.primary {
+      margin: 12px 0; padding: 8px 16px; font: inherit; cursor: pointer;
+      border: 1px solid var(--line); border-radius: 6px;
+      background: var(--bar); color: #fff;
+    }
+    button.primary:disabled { opacity: .5; cursor: default; }
+    #progress {
+      height: 10px; margin: 8px 0; border-radius: 5px; overflow: hidden;
+      background: var(--bar-bg);
+    }
+    #progress i {
+      display: block; height: 100%; width: 0; background: var(--bar);
+      border-radius: 5px; transition: width .3s ease;
+    }
+    /* No known total: a sliding block instead of a filling bar. */
+    #progress.unknown i { width: 30%; animation: slide 1.4s ease-in-out infinite alternate; }
+    @keyframes slide { from { margin-left: 0; } to { margin-left: 70%; } }
+    @media (prefers-reduced-motion: reduce) {
+      #progress i { transition: none; }
+      #progress.unknown i { animation: none; width: 100%; opacity: .4; }
+    }
+    #tree { margin-top: 12px; border-top: 1px solid var(--line); }
+    .head, .row {
+      display: grid; align-items: center; gap: 8px;
+      grid-template-columns: minmax(0, 1fr) 120px 90px 90px 80px;
+      padding: 4px 6px; border-bottom: 1px solid var(--line);
+    }
+    .head { font-weight: 600; color: var(--muted); font-size: 12px; }
+    .row:hover { background: var(--hover); }
+    .name { display: flex; align-items: center; min-width: 0; }
+    .name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .toggle {
+      flex: none; width: 20px; height: 20px; margin-right: 4px; padding: 0;
+      border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit;
+    }
+    .toggle[disabled] { visibility: hidden; }
+    .bar { height: 8px; background: var(--bar-bg); border-radius: 4px; overflow: hidden; }
+    .bar i { display: block; height: 100%; background: var(--bar); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    @media (max-width: 640px) {
+      .head, .row { grid-template-columns: minmax(0, 1fr) 80px 60px; }
+      .bar, .col-size, .head .col-bar { display: none; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Drive Folder Size</h1>
+  <p class="muted">Totals the files you own in each folder of your My Drive.
+    Read-only: it reads file sizes and folder names, never file contents.</p>
+  <button id="scan" class="primary">Scan my Drive</button>
+  <div id="progress" role="progressbar" aria-label="Scan progress"
+       aria-valuemin="0" aria-valuemax="100" hidden><i></i></div>
+  <p id="status" class="muted"></p>
+  <p id="notice" class="warn"></p>
+  <div id="tree" hidden>
+    <div class="head">
+      <div>Folder</div><div class="col-bar"></div>
+      <div class="num" title="Bytes counted against your storage quota">Storage used</div>
+      <div class="num col-size" title="Sum of file sizes">File size</div>
+      <div class="num">Files</div>
+    </div>
+    <div id="rows"></div>
+  </div>
+</main>
+
+<?!= include('rollup') ?>
+<script>
+  var MAX_RETRIES = 5;
+  var state, pages;
+  var el = function (id) { return document.getElementById(id); };
+
+  el('scan').addEventListener('click', startScan);
+
+  function startScan() {
+    state = newState();
+    pages = 0;
+    el('scan').disabled = true;
+    el('tree').hidden = true;
+    el('notice').textContent = '';
+    el('status').textContent = 'Starting…';
+    setProgress(null);
+    el('progress').hidden = false;
+    call('getStart', [], function (root) {
+      setProgress(progressPercent(0, root.expectedBytes));
+      fetchPage(root, null);
+    });
+  }
+
+  // percent: 0-100, or null for "working, total unknown".
+  function setProgress(percent) {
+    var bar = el('progress');
+    if (percent === null) {
+      bar.classList.add('unknown');
+      bar.removeAttribute('aria-valuenow');
+      bar.firstElementChild.style.width = '';
+    } else {
+      bar.classList.remove('unknown');
+      bar.setAttribute('aria-valuenow', String(percent));
+      bar.firstElementChild.style.width = percent + '%';
+    }
+  }
+
+  function fetchPage(root, token) {
+    call('listPage', [token], function (page) {
+      mergePage(state, page);
+      pages++;
+      var percent = progressPercent(state.quotaBytes, root.expectedBytes);
+      setProgress(percent);
+      el('status').textContent = 'Scanning… ' +
+        (percent === null ? '' : percent + '% · ') +
+        state.fileCount.toLocaleString() + ' files in ' +
+        Object.keys(state.folders).length.toLocaleString() + ' folders so far';
+      if (page.next) fetchPage(root, page.next);
+      else finish(root);
+    });
+  }
+
+  // google.script.run with exponential backoff on failure.
+  function call(fn, args, onSuccess, attempt) {
+    attempt = attempt || 0;
+    var runner = google.script.run
+      .withSuccessHandler(onSuccess)
+      .withFailureHandler(function (err) {
+        if (attempt >= MAX_RETRIES) return fail(err);
+        var wait = Math.min(32000, 1000 * Math.pow(2, attempt)) + Math.random() * 1000;
+        el('status').textContent = 'Drive is busy, retrying…';
+        setTimeout(function () { call(fn, args, onSuccess, attempt + 1); }, wait);
+      });
+    runner[fn].apply(runner, args);
+  }
+
+  function fail(err) {
+    el('progress').hidden = true;
+    el('status').textContent = '';
+    el('notice').textContent = 'Scan failed: ' + (err && err.message ? err.message : err);
+    el('scan').disabled = false;
+  }
+
+  function finish(root) {
+    var tree = buildTree(state, root.id, root.name);
+    var rows = el('rows');
+    rows.textContent = '';
+    var scale = Math.max(tree.root.quota, tree.other ? tree.other.quota : 0, 1);
+    rows.appendChild(renderNode(tree.root, 0, scale, true));
+    if (tree.other) rows.appendChild(renderNode(tree.other, 0, scale, false));
+    el('tree').hidden = false;
+    el('progress').hidden = true;
+    el('status').textContent = 'Done: ' + state.fileCount.toLocaleString() + ' files, ' +
+      formatBytes(tree.root.quota + (tree.other ? tree.other.quota : 0)) + ' of storage used.';
+    if (state.incomplete) {
+      el('notice').textContent =
+        'Google Drive reported that the listing may be incomplete, so totals may be low.';
+    }
+    el('scan').disabled = false;
+    el('scan').textContent = 'Scan again';
+  }
+
+  // A folder row plus a lazily filled container for its children.
+  function renderNode(node, depth, scale, open) {
+    var wrap = document.createElement('div');
+    var row = document.createElement('div');
+    row.className = 'row';
+
+    var name = document.createElement('div');
+    name.className = 'name';
+    name.style.paddingLeft = (depth * 18) + 'px';
+    var toggle = document.createElement('button');
+    toggle.className = 'toggle';
+    toggle.disabled = node.children.length === 0;
+    var label = document.createElement('span');
+    label.textContent = node.name;      // textContent: names are untrusted
+    label.title = node.name;
+    name.appendChild(toggle);
+    name.appendChild(label);
+
+    var bar = document.createElement('div');
+    bar.className = 'bar';
+    var fill = document.createElement('i');
+    fill.style.width = (100 * node.quota / scale).toFixed(2) + '%';
+    bar.appendChild(fill);
+
+    row.appendChild(name);
+    row.appendChild(bar);
+    row.appendChild(cell(formatBytes(node.quota), 'num'));
+    row.appendChild(cell(formatBytes(node.size), 'num col-size'));
+    row.appendChild(cell(node.files.toLocaleString(), 'num'));
+
+    var kids = document.createElement('div');
+    var filled = false;
+    function setOpen(isOpen) {
+      if (isOpen && !filled) {
+        for (var i = 0; i < node.children.length; i++) {
+          kids.appendChild(renderNode(node.children[i], depth + 1, scale, false));
+        }
+        filled = true;
+      }
+      kids.hidden = !isOpen;
+      toggle.textContent = isOpen ? '▾' : '▸';
+      toggle.setAttribute('aria-expanded', String(isOpen));
+      toggle.setAttribute('aria-label', (isOpen ? 'Collapse ' : 'Expand ') + node.name);
+    }
+    toggle.addEventListener('click', function () { setOpen(kids.hidden); });
+    setOpen(open && node.children.length > 0);
+
+    wrap.appendChild(row);
+    wrap.appendChild(kids);
+    return wrap;
+  }
+
+  function cell(text, cls) {
+    var d = document.createElement('div');
+    d.className = cls;
+    d.textContent = text;
+    return d;
+  }
+</script>
+</body>
+</html>

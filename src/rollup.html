@@ -1,0 +1,125 @@
+<script>
+// Folder-tree rollup. Pure functions, no DOM and no Google APIs, so the
+// Node tests can load this file directly (they strip the script tags).
+
+var OTHER_ID = '__other__';
+
+function newState() {
+  return {
+    folders: {},      // id -> { name, parent }
+    direct: {},       // parentId -> [sizeBytes, quotaBytes, fileCount]
+    fileCount: 0,
+    quotaBytes: 0,    // storage bytes seen so far, for the progress bar
+    incomplete: false
+  };
+}
+
+// Fold one listPage() result into the running state.
+function mergePage(state, page) {
+  var i;
+  for (i = 0; i < page.folders.length; i++) {
+    var f = page.folders[i];
+    state.folders[f[0]] = { name: f[1], parent: f[2] };
+  }
+  for (var parent in page.sums) {
+    if (!Object.prototype.hasOwnProperty.call(page.sums, parent)) continue;
+    var add = page.sums[parent];
+    var cur = state.direct[parent] || (state.direct[parent] = [0, 0, 0]);
+    cur[0] += add[0];
+    cur[1] += add[1];
+    cur[2] += add[2];
+    state.fileCount += add[2];
+    state.quotaBytes += add[1];
+  }
+  if (page.incomplete) state.incomplete = true;
+  return state;
+}
+
+function makeNode_(id, name) {
+  return {
+    id: id,
+    name: name,
+    children: [],
+    ownSize: 0, ownQuota: 0, ownFiles: 0,   // files directly inside
+    size: 0, quota: 0, files: 0             // including all subfolders
+  };
+}
+
+// Build the tree and total every folder.
+//
+// Returns { root, other }. `other` collects items you own whose parent
+// folder is not one of your own folders (for example a file you put in
+// someone else's shared folder); it is null when there are none.
+// Children are sorted largest first by storage used.
+function buildTree(state, rootId, rootName) {
+  var nodes = {};
+  var root = makeNode_(rootId, rootName || 'My Drive');
+  var other = makeNode_(OTHER_ID, 'Outside My Drive folders');
+  nodes[rootId] = root;
+
+  var id;
+  for (id in state.folders) {
+    if (id !== rootId) nodes[id] = makeNode_(id, state.folders[id].name);
+  }
+  for (id in state.folders) {
+    if (id === rootId) continue;
+    var parentId = state.folders[id].parent;
+    var parentNode = (parentId !== id && nodes[parentId]) || other;
+    parentNode.children.push(nodes[id]);
+  }
+  for (var pid in state.direct) {
+    var target = nodes[pid] || other;
+    var d = state.direct[pid];
+    target.ownSize += d[0];
+    target.ownQuota += d[1];
+    target.ownFiles += d[2];
+  }
+
+  // Post-order without recursion: deep trees must not overflow the stack.
+  var order = [];
+  var stack = [root, other];
+  while (stack.length) {
+    var n = stack.pop();
+    order.push(n);
+    for (var c = 0; c < n.children.length; c++) stack.push(n.children[c]);
+  }
+  for (var k = order.length - 1; k >= 0; k--) {
+    var node = order[k];
+    node.size = node.ownSize;
+    node.quota = node.ownQuota;
+    node.files = node.ownFiles;
+    for (var j = 0; j < node.children.length; j++) {
+      node.size += node.children[j].size;
+      node.quota += node.children[j].quota;
+      node.files += node.children[j].files;
+    }
+    node.children.sort(function (a, b) {
+      return b.quota - a.quota || b.size - a.size || a.name.localeCompare(b.name);
+    });
+  }
+
+  var hasOther = other.files > 0 || other.children.length > 0;
+  return { root: root, other: hasOther ? other : null };
+}
+
+// Percent complete for the progress bar, or null when no total is known.
+// Held at 99 until the scan really finishes: the expected total is only
+// an estimate, so the bytes seen can reach or pass it early.
+function progressPercent(seenBytes, expectedBytes) {
+  if (!expectedBytes || expectedBytes <= 0) return null;
+  return Math.max(0, Math.min(99, Math.floor(100 * seenBytes / expectedBytes)));
+}
+
+function formatBytes(bytes) {
+  var units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  var value = bytes;
+  var u = 0;
+  while (value >= 1024 && u < units.length - 1) {
+    value /= 1024;
+    u++;
+  }
+  if (u === 0) return value + ' B';
+  return (value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2)) +
+    ' ' + units[u];
+}
+</script>
