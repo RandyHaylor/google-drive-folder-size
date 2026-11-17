@@ -53,7 +53,9 @@
     .head { font-weight: 600; color: var(--muted); font-size: 12px; }
     .row:hover { background: var(--hover); }
     .name { display: flex; align-items: center; min-width: 0; }
-    .name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .name .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .name a.label { color: inherit; text-decoration: none; }
+    .name a.label:hover, .name a.label:focus-visible { color: var(--bar); text-decoration: underline; }
     .toggle {
       flex: none; width: 20px; height: 20px; margin-right: 4px; padding: 0;
       border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit;
@@ -193,9 +195,20 @@
     var toggle = document.createElement('button');
     toggle.className = 'toggle';
     toggle.disabled = node.children.length === 0;
-    var label = document.createElement('span');
+    // Real folders link to themselves in Drive; the "outside" bucket is
+    // not a folder, so it stays plain text.
+    var label;
+    if (node.id === OTHER_ID) {
+      label = document.createElement('span');
+    } else {
+      label = document.createElement('a');
+      label.href = 'https://drive.google.com/drive/folders/' + encodeURIComponent(node.id);
+      label.target = '_blank';
+      label.rel = 'noopener noreferrer';
+    }
+    label.className = 'label';
     label.textContent = node.name;      // textContent: names are untrusted
-    label.title = node.name;
+    label.title = node.id === OTHER_ID ? node.name : 'Open "' + node.name + '" in Google Drive';
     name.appendChild(toggle);
     name.appendChild(label);
 

@@ -14,7 +14,7 @@ It runs entirely inside Google (as a Google Apps Script web app), asks for read-
    - You will see **"Google hasn't verified this app"**. Click **Advanced**, then **Go to Drive Folder Size (unsafe)**. The warning appears because this is a personal project that has not been through Google's review, not because of anything it does.
    - Click **Allow**. The only permission requested is *See information about your Google Drive files*.
 4. Click **Scan my Drive**. A progress bar runs while it reads your file list, 1,000 files at a time.
-5. When it finishes, click the arrow beside any folder to open it.
+5. When it finishes, click the arrow beside any folder to expand it. Click a folder's name to open that folder in Google Drive in a new tab.
 
 Nothing is saved between visits. Click **Scan again** for fresh numbers.
 
