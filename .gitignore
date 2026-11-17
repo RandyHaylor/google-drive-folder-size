@@ -1,0 +1,21 @@
+# Google OAuth / API credentials
+credentials.json
+client_secret*.json
+token.json
+token*.json
+*.pem
+.env
+.env.*
+.clasprc.json
+
+# Scan output (contains private file names)
+output/
+*.scan.json
+*.scan.csv
+
+# Tooling
+node_modules/
+__pycache__/
+.venv/
+*.pyc
+.DS_Store
